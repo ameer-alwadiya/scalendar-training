@@ -186,6 +186,8 @@ header.sr .title,header.sr .nv{display:none}header:not(.sr) #q{display:none}
 .urlrow input{flex:1;min-width:0;border:0;border-radius:12px;background:var(--card);color:var(--fg);padding:10px 12px;font:inherit;font-size:14px;outline:0;user-select:text;-webkit-user-select:text}
 @media(prefers-reduced-motion:reduce){*{transition:none!important}}
 /* ===== Phone polish ===== */
+.title{overflow:hidden}.title b,.title span{white-space:nowrap}
+@media(max-width:480px){.title{flex-direction:column;align-items:flex-start;gap:0;justify-content:center}.title b{font-size:22px;line-height:1.1}.title span{font-size:13px;line-height:1.2}header .ib{width:40px;height:40px}header{gap:0;padding-left:6px;padding-right:6px}}
 html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 @supports(height:100dvh){html,body{height:100dvh}}
 body{overscroll-behavior-y:none}
@@ -239,7 +241,13 @@ button,[role=button],select,input,.c,.ev,.tev,.dh,.exercise-main{touch-action:ma
 </div>
 <script>
 const HH=52,$=s=>document.querySelector(s),pad=n=>String(n).padStart(2,'0');
-const lg=k=>{try{return localStorage.getItem(k)}catch(e){return null}},ls=(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}};
+const MEM={},dirty=new Set(),chain={},tmr={},NOSYNC=/^(sc_ev|sc_plan|sc_gcid)$/;let COL=null,READY=false,SYNCED=false,ASSETS=null;
+const dk=k=>k.replace(/[^A-Za-z0-9_.:@+-]/g,c=>'~'+c.charCodeAt(0).toString(16)+'~').slice(0,190);
+function flush(k){if(!COL||!dirty.has(k))return;chain[k]=(chain[k]||Promise.resolve()).then(async()=>{if(!dirty.has(k))return;const v=MEM[k];try{await COL.doc(dk(k)).set({k,v,t:Date.now()});if(MEM[k]===v)dirty.delete(k)}catch(e){}})}
+let LSOK=true;try{localStorage.setItem('sc_t','1');LSOK=localStorage.getItem('sc_t')==='1';localStorage.removeItem('sc_t')}catch(e){LSOK=false}
+const saveStatus=()=>SYNCED?' Saved to your account.':LSOK?' Saved on this device only.':' Warning: this browser is blocking saving, so notes will be lost when you close the page. Open the page in Safari (not a private tab) or from your home screen icon.';
+const lg=k=>{if(k in MEM)return MEM[k];try{const v=localStorage.getItem(k);if(v!==null)return v}catch(e){}return null},
+ ls=(k,v)=>{MEM[k]=v;try{localStorage.setItem(k,v)}catch(e){}if(!NOSYNC.test(k)){dirty.add(k);clearTimeout(tmr[k]);tmr[k]=setTimeout(()=>flush(k),800)}};
 const key=d=>d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());
 const iso=d=>key(d)+'T'+pad(d.getHours())+':'+pad(d.getMinutes());
 const parse=s=>{const[a,b='0:0']=s.split('T'),[y,m,d]=a.split('-').map(Number),[h,i]=b.split(':').map(Number);return new Date(y,m-1,d,h,i)};
@@ -257,16 +265,25 @@ const cls=d=>d.getDay()==0?'su':d.getDay()==6?'sa':'';
 
 let ev=null;try{ev=JSON.parse(lg('sc_ev'))}catch(e){}
 if(!ev)ev=[];
-const save=()=>ls('sc_ev',JSON.stringify(ev.filter(e=>e.cal!='google')));
+const save=()=>{ls('sc_ev',JSON.stringify(ev.filter(e=>e.cal!='google')));if(READY)ls('sc_userev',JSON.stringify(ev.filter(e=>e.cal!='google'&&!String(e.id).startsWith('plan_'))))};
 /* ===== Weekly training plan =====
    Weekly repeating events (edit one and every week changes) + a 4-week block marker on each Monday.
    Change PLAN_START / PLAN_WEEKS or the times below, then bump PLAN_VER to re-load the plan. */
-const PLAN_VER='v7',PLAN_START=new Date(2026,10,16),PLAN_WEEKS=104;
+const PLAN_VER='v8',PLAN_START=new Date(2026,10,16),PLAN_WEEKS=104;
 function planEvents(){
  const at=(n,hm)=>{const[h,m]=hm.split(':').map(Number);return iso(new Date(PLAN_START.getFullYear(),PLAN_START.getMonth(),PLAN_START.getDate()+n,h,m))};
  const J=a=>a.join('\n');
  const UP_WARM='Warm-up (8-10 min): band pull-aparts 2x15, cat-cow & thread the needle 6/side, scapular push-ups 2x10, 2 ramp-up sets of the first lift.';
  const COOL='Cool-down (5 min): hip flexor stretch 45s/side, calf & soleus stretch 30s each/side, chest stretch 45s/side, box breathing 5-6 cycles.';
+ const PRE={
+  gym:['Eat 2-3 h before: carbs + protein, e.g. rice or oats with eggs or chicken, or a tuna sandwich. Keep fat and fibre low.','30-60 min before: a light carb snack (banana, dates or toast with honey) and 300-500 ml water.','Do: pack water and a towel, check last session\'s weights and aim to beat one number today.'],
+  fb:['Eat 2-3 h before (about 17:00): pasta or rice with chicken or fish and a little veg. Avoid heavy fat and fibre.','45-60 min before: a banana or toast with honey and 400-500 ml water. Sip water until kick-off.','Do: pack boots, shin guards and a water bottle, and arrive 10 min early to warm up.'],
+  mob:['No meal needed: a light snack and a glass of water is plenty.','Do: do it after your easy jog or a 5 min walk, when your muscles are warm, on a mat or carpet.']};
+ const WARM_DEF={fb:'Warm-up (10 min): easy jog 3 min, leg swings 10/dir, glute bridges 2 x 10, pogo hops 2 x 15, Copenhagen plank 2 x 20s/side (easy), 3 build-up strides.',mob:'Warm-up (3 min): brisk walk 2 min, leg swings 10/dir, ankle circles 10/dir.'};
+ const COOL_DEF={fb:'Cool-down (5-8 min): easy walk 3 min, quad stretch 45s/side, hamstring stretch 45s/side, calf stretch 30s/side, box breathing 5-6 cycles.',mob:'Cool-down (3 min): hamstring stretch 45s/side, calf stretch 30s/side, box breathing 5-6 cycles.'};
+ const HEAD_DEF={fb:'FOOTBALL',mob:'PREHAB'};
+ const WARM_RUN='Warm-up (5 min): brisk walk 2 min, leg swings 10/dir, ankle circles 10/dir, walking lunges 8/side.';
+ const COOL_RUN='Cool-down (5-8 min): easy walk 3 min, calf stretch 30s/side, quad stretch 45s/side, hip flexor stretch 45s/side, box breathing 5-6 cycles.';
  const WARM_BIKE='Warm-up (5-10 min): easy stationary bike 5 min, arm circles 10/dir, bodyweight squats 10, leg swings 10/dir.';
  const WARM_FREE='Warm-up (5 min): free dynamic movement 2 min, arm circles 10/dir, bodyweight squats 10, hip circles 10/dir.';
  const S=[
@@ -285,7 +302,6 @@ function planEvents(){
   {k:'tue_fb',wk:0,day:1,time:'20:00',mins:90,cal:'fb',title:'Football',rep:'weekly',
    lead:'SESSION: Weekly top-speed, agility and contact work.',body:[
     'Easy commute today, no leg lifting Mon-Tue.',
-    'Activation (8 min before kick-off): leg swings 10/dir, glute bridges 2x10, pogo hops 2x15, Copenhagen plank 2x20s/side (easy), 3 build-up strides.',
     'After: protein + carbs within 1-2 h, then sleep 7-9 h.']},
   {k:'w1_mon',wk:0,day:0,time:'18:00',mins:70,cal:'gym',title:'Gym · Chest & Biceps',
    lead:'FOCUS: Chest, core and arms. Upper body only, so your legs stay fresh for Tuesday football.',
@@ -413,23 +429,28 @@ function planEvents(){
  const runs=[];
  for(let w=0;w<17;w++){
   const wd=WED[w],km=LONG[w];
-  runs.push({id:'plan_run_wed_'+w,title:wd[1],cal:'run',start:at(7*w+2,'07:00'),end:iso(new Date(+parse(at(7*w+2,'07:00'))+wd[0]*6e4)),note:J([wd[2],KEY,...wd[3]])});
+  runs.push({id:'plan_run_wed_'+w,title:wd[1],cal:'run',start:at(7*w+2,'07:00'),end:iso(new Date(+parse(at(7*w+2,'07:00'))+wd[0]*6e4)),note:J([wd[2],'BEFORE','Eat 30-45 min before: a banana or toast with honey and 300 ml water. Nothing heavy at 07:00.','Night before: a carb-rich dinner (rice, pasta or potatoes) and 2-3 glasses of water.','Do: lay out your kit and shoes, and use the toilet before you leave.',WARM_RUN,'RUN',KEY,...wd[3],COOL_RUN])});
   const lm=Math.round(km*6.8)+10,ls0=at(7*w+5,'09:00');
   runs.push({id:'plan_run_sat_'+w,title:'Run · Long '+km+' km',cal:'run',start:ls0,end:iso(new Date(+parse(ls0)+lm*6e4)),
-   note:J(['PRE-RUN: 5 min easy jog, eat carbohydrate 2-3 h beforehand and hydrate.',km+' km long run. '+LT[w],km>=18?'Fuel: from about 60 min take 30-60 g carbs per hour (gel or sports drink) plus water.':'',KEY,w==16?'Race is tomorrow: lay out kit, bib and fuel tonight. Eat carbs, drink water, sleep early.':''].filter(Boolean))});
+   note:J(['FOCUS: '+km+' km long run. '+LT[w],'BEFORE','Night before: a carb-rich dinner (pasta, rice or potatoes), drink water and sleep before 11 PM.','Breakfast 2-3 h before (about 06:30): oats or toast with banana and honey, 400-500 ml water, and coffee if you normally have it.',km>=18?'15-30 min before: a gel or a banana, plus a few sips of water.':'15-30 min before: a few sips of water; a banana if you are hungry.','Do: pack gels and water, charge your watch and apply anti-chafe where you need it.',WARM_RUN,'RUN',km>=18?'Fuel: from about 60 min take 30-60 g carbs per hour (gel or sports drink) plus water.':'',KEY,w==16?'Race is tomorrow: lay out kit, bib and fuel tonight. Eat carbs, drink water, sleep early.':'',COOL_RUN].filter(Boolean))});
   if(SUN[w]){const s0=at(7*w+6,'10:00');
    runs.push({id:'plan_run_sun_'+w,title:'Run · Recovery jog (optional)',cal:'run',start:s0,end:iso(new Date(+parse(s0)+SUN[w]*6e4)),
-    note:J(['SESSION: '+SUN[w]+' min very easy jog (RPE 3-4) or a brisk walk.','Skip it if your legs feel heavy after Saturday\'s long run.'])})}
+    note:J(['SESSION: '+SUN[w]+' min very easy jog (RPE 3-4) or a brisk walk.','BEFORE','A light breakfast is enough: toast or yoghurt with fruit, and 300 ml water.','Do: keep it truly easy. If your legs feel heavy after Saturday\'s long run, walk instead.',WARM_RUN,'RUN','Skip it if you are very sore.',COOL_RUN])})}
  }
  const rs=at(7*16+6,'09:00');
  runs.push({id:'plan_race',title:'Marathon · Race day',cal:'run',start:rs,end:iso(new Date(+parse(rs)+300*6e4)),note:J([
-  'RACE DAY: 42.2 km. Run the first 5 km at easy pace (RPE 5), settle at marathon pace (RPE 6-7) and hold it. Only push after 35 km.',
-  'Breakfast 2-3 h before: about 100 g carbs from familiar foods.',
-  'Fuel: 30-60 g carbs per hour from km 5 (gel every 30-40 min) plus water at each aid station.',
-  'Warm-up: 5 min easy walk or jog and 3 strides. No more.',
+  'FOCUS: 42.2 km. Run the first 5 km at easy pace (RPE 5), settle at marathon pace (RPE 6-7) and hold it. Only push after 35 km.',
+  'BEFORE',
+  'Two days before: carb-rich meals, little fibre, plenty of water.',
+  'Breakfast 2-3 h before: about 100 g carbs from familiar foods (oats, toast with honey, banana). Drink 500 ml water.',
+  '15-30 min before the start: a gel and a few sips of water. Do: pin your bib, apply anti-chafe, and use the toilet.',
+  'Warm-up (5 min): easy walk 2 min, leg swings 10/dir, ankle circles 10/dir, 3 relaxed strides',
+  'RACE',
+  'Fuel: 30-60 g carbs per hour from km 5 (a gel every 30-40 min) plus water at each aid station.',
   'Nothing new on race day: same shoes, kit and fuel as your long runs.',
-  'After: walk 10 min, eat protein and carbs, then take 2 recovery weeks.'])});
- const out=S.filter(p=>!p.skip).map(p=>{const st=at(7*p.wk+p.day,p.time);return{id:'plan_'+p.k,title:p.title,cal:p.cal,start:st,end:iso(new Date(+parse(st)+p.mins*6e4)),rep:p.rep||'biweekly',note:J([p.lead,p.warm,p.head,...p.body,p.cool].filter(Boolean))}}).concat(runs);
+  'Cool-down (10 min): walk 10 min, calf stretch 30s/side, quad stretch 45s/side, box breathing 5-6 cycles',
+  'After: eat protein and carbs within an hour, then take 2 recovery weeks.'])});
+ const out=S.filter(p=>!p.skip).map(p=>{const st=at(7*p.wk+p.day,p.time);return{id:'plan_'+p.k,title:p.title,cal:p.cal,start:st,end:iso(new Date(+parse(st)+p.mins*6e4)),rep:p.rep||'biweekly',note:J([p.lead,...(PRE[p.cal]?['BEFORE',...PRE[p.cal]]:[]),p.warm||WARM_DEF[p.cal],p.head||HEAD_DEF[p.cal],...p.body,p.cool||COOL_DEF[p.cal]].filter(Boolean))}}).concat(runs);
  const PH=['Base','Base','Base','Base · down week','Build','Build','Build','Build · down week','Peak build','Peak build','Peak build','Down week','Peak','Peak','Taper','Taper','Race week'];
  const GYMTIP=w=>w==16?'Race week: gym Monday only if you feel fresh (light upper, 2 sets). Skip Wednesday to Friday gym. Carb-load Thursday to Saturday, sleep before 11 PM.':w>=14?'Taper: cut gym sets by about 40% and skip heavy leg work (no extra squats or deadlifts).':[3,7,11].includes(w)?'Down week: cut gym sets by about 40% and finish every set with 3+ reps in reserve.':w==0?'Gym starts with 2-3 reps in reserve on every lift.':'Gym: add a rep or a little weight when you hit the top of the rep range. If tired, protect the long run and quality run first.';
  for(let w=0;w<PLAN_WEEKS;w++){const d=at(7*w,'00:00');let t,n;
@@ -495,15 +516,17 @@ function vWorkout(){
  const e=activeWorkout;if(!e)return '<div class="empty">Workout not found.</div>';
  const lines=String(e.note||'').split(/\n+/).map(x=>x.trim()).filter(Boolean);
  const focus=lines.find(x=>/^(FOCUS|SESSION|PRE-RUN|DEFAULT):/i.test(x));
- const sections=[];let section='SESSION',items=[];
+ const sections=[];let section='SESSION',items=[],recommendations=[];
  const flush=()=>{if(items.length){sections.push({name:section,items});items=[]}};
  for(const line of lines){
-  if(/^(FOCUS|SESSION|PRE-RUN|STRENGTH|PREHAB|CIRCUIT|CARDIO|DEFAULT):?$/i.test(line)){flush();section=line.replace(/:$/,'');continue}
+  if(/^(FOCUS|SESSION|PRE-RUN|STRENGTH|PREHAB|CIRCUIT|CARDIO|BEFORE|FOOTBALL|RUN|RACE|DEFAULT):?$/i.test(line)){flush();section=line.replace(/:$/,'');if(section==='BEFORE')section='RECOMMENDATIONS';continue}
+  if(/^(Easy commute\b|After:)/i.test(line)){flush();recommendations.push(line);continue}
   if(line===focus)continue;
   if(/^(Warm-up|Cool-down)\b/i.test(line)){flush();sections.push({name:/^Warm-up/i.test(line)?'WARM-UP':'COOL-DOWN',items:[line]});continue}
   items.push(line);
  }
  flush();
+ if(recommendations.length)sections.push({name:'RECOMMENDATIONS',items:recommendations});
  // Split comma-separated warm-up sequences into individual selectable entries.
  for(const sec of sections){
   if(sec.name!=='WARM-UP'&&sec.name!=='COOL-DOWN')continue;
@@ -519,9 +542,11 @@ function vWorkout(){
  const dateLabel=fd(cur,{weekday:'long',day:'numeric',month:'long'}),duration=Math.round((parse(e.end)-parse(e.start))/60000);
  const doneKey='sc_done_'+e.id+'_'+key(cur);let done={},subDone={};try{done=JSON.parse(lg(doneKey)||'{}');subDone=JSON.parse(lg('sc_subdone_'+e.id+'_'+key(cur))||'{}')}catch(x){}
  let idx=0,doneN=0,exNum=0;
- const isEx=(line,secName)=>((secName==='WARM-UP'||secName==='COOL-DOWN')&&!/ramp-up sets/i.test(line))||/\d\s*x\s*\d/i.test(line);
+ const isActivity=['run','fb','mob'].includes(e.cal);
+ const isEx=(line,secName)=>((secName==='WARM-UP'||secName==='COOL-DOWN')&&!/ramp-up sets/i.test(line))||/\d\s*x\s*\d/i.test(line)||(isActivity&&secName!=='BEFORE'&&secName!=='RECOMMENDATIONS'&&!/ramp-up sets/i.test(line));
  const total=sections.reduce((n,sec)=>n+sec.items.filter(l=>isEx(l,sec.name)).length,0);
  const body=sections.map(sec=>`<section class="wsection"><h3>${esc(sec.name)}</h3>${sec.items.map(line=>{
+   if(sec.name==='BEFORE'||sec.name==='RECOMMENDATIONS')return `<div class="wfocus" style="margin-bottom:8px">${esc(line)}</div>`;
    const warmMovement=(sec.name==='WARM-UP'||sec.name==='COOL-DOWN')&&!/ramp-up sets/i.test(line);
    const isExercise=isEx(line,sec.name),id=idx++;
    const m=line.match(/^(.*?)\s+(\d+\s*x\s*[^,;(]+)(?:,?\s*(.*))?$/i);
@@ -618,7 +643,7 @@ function vExercise(){
      :`<div class="timerbox"><div class="timerlabel">READY WHEN YOU ARE</div><div class="subactions" style="justify-content:center"><button class="actionbtn start" id="startplain">Start exercise</button></div></div>`;
  }
  const canComplete=flow.phase==='done';
- return `<div class="subpage"><div class="wtop"><span>WORKOUT</span><span>·</span><span>${esc(x.section)}</span></div><div class="subhero"><div class="subtag">EXERCISE GUIDE</div><h2>${esc(x.name)}</h2><div class="exmeta">${esc(x.raw)}</div></div><section class="subcard"><h3>How to do it</h3><p>${esc(g.how)}</p></section><section class="subcard"><h3>${isWarm?'Warm-up sequence':isCool?'Cool-down sequence':'Step by step'}</h3>${(isWarm||isCool)&&warmGuide?warmGuide:steps.map((v,i)=>`<div class="substep"><b>${i+1}.</b> ${esc(v)}</div>`).join('')}</section><section class="subcard"><h3>Technique cues</h3><p>${esc(g.cue)}</p></section>${tracker}<div class="notebox"><h3>Notes</h3><div id="exnote" contenteditable="true" role="textbox" aria-multiline="true" data-ph="Write notes, or paste an image / GIF here…" spellcheck="true">${note.html}</div><div class="uploadhint">Type notes and paste images or GIFs right into this box. Tap an image to remove it.</div></div><div class="subactions"><button class="actionbtn" id="subback">Back to workout</button>${canComplete?'<button class="actionbtn start" id="subcomplete">Finish exercise</button>':''}</div></div>`;
+ return `<div class="subpage"><div class="wtop"><span>WORKOUT</span><span>·</span><span>${esc(x.section)}</span></div><div class="subhero"><div class="subtag">EXERCISE GUIDE</div><h2>${esc(x.name)}</h2><div class="exmeta">${esc(x.raw)}</div></div><section class="subcard"><h3>How to do it</h3><p>${esc(g.how)}</p></section><section class="subcard"><h3>${isWarm?'Warm-up sequence':isCool?'Cool-down sequence':'Step by step'}</h3>${(isWarm||isCool)&&warmGuide?warmGuide:steps.map((v,i)=>`<div class="substep"><b>${i+1}.</b> ${esc(v)}</div>`).join('')}</section><section class="subcard"><h3>Technique cues</h3><p>${esc(g.cue)}</p></section>${tracker}<div class="notebox"><h3>Notes</h3><div id="exnote" contenteditable="true" role="textbox" aria-multiline="true" data-ph="Write notes, or paste an image / GIF here…" spellcheck="true">${note.html}</div><div class="uploadhint">Type notes and paste images or GIFs right into this box. Tap an image to remove it.${saveStatus()}</div></div><div class="subactions"><button class="actionbtn" id="subback">Back to workout</button>${canComplete?'<button class="actionbtn start" id="subcomplete">Finish exercise</button>':''}</div></div>`;
 }
 const noteKey=(wid,name)=>'sc_exnote_'+wid+'_'+name;
 function getNote(wid,name){let n=null;try{n=JSON.parse(lg(noteKey(wid,name)))}catch(_){}
@@ -630,7 +655,7 @@ function getNote(wid,name){let n=null;try{n=JSON.parse(lg(noteKey(wid,name)))}ca
 function saveNoteBox(){const el=$('#exnote');if(!el||!activeSubExercise)return true;
  if(el.innerHTML==='<br>')el.innerHTML='';
  const wid=activeWorkout?.id||'',name=activeSubExercise.name,n=getNote(wid,name);
- n.html=el.innerHTML;n.text=el.innerText.replace(/\u00a0/g,' ').trim();n.images=[...el.querySelectorAll('img')].map(i=>i.getAttribute('src')).filter(Boolean);
+ n.html=el.innerHTML;n.text=String(el.innerText??el.textContent??'').replace(/\u00a0/g,' ').trim();n.images=[...el.querySelectorAll('img')].map(i=>i.getAttribute('src')).filter(Boolean);
  try{localStorage.removeItem('sc_subimage_'+wid+'_'+name)}catch(_){}
  return putNote(wid,name,n)}
 function insertAtCaret(node){const el=$('#exnote');if(!el)return;el.focus();
@@ -640,7 +665,7 @@ function insertAtCaret(node){const el=$('#exnote');if(!el)return;el.focus();
  r.deleteContents();const br=document.createElement('br');
  const frag=document.createDocumentFragment();frag.append(node,br);r.insertNode(frag);
  r.setStartAfter(br);r.collapse(true);sel.removeAllRanges();sel.addRange(r)}
-function putNote(wid,name,n){try{localStorage.setItem(noteKey(wid,name),JSON.stringify(n));return true}catch(_){return false}}
+function putNote(wid,name,n){try{ls(noteKey(wid,name),JSON.stringify(n));return true}catch(_){return false}}
 function shrinkImage(file){return new Promise((res,rej)=>{const r=new FileReader();r.onerror=()=>rej(new Error('read'));
  r.onload=()=>{const im=new Image();im.onerror=()=>rej(new Error('img'));
   im.onload=()=>{const k=Math.min(1,900/Math.max(im.width,im.height)),c=document.createElement('canvas');c.width=Math.max(1,Math.round(im.width*k));c.height=Math.max(1,Math.round(im.height*k));c.getContext('2d').drawImage(im,0,0,c.width,c.height);res(c.toDataURL('image/jpeg',.72))};
@@ -654,7 +679,7 @@ function readImage(file){if(file.type==='image/gif'){return new Promise((res,rej
 function addImages(srcs){if(!activeSubExercise||!srcs.length||!$('#exnote'))return false;
  srcs.forEach(src=>{const im=document.createElement('img');im.src=src;im.alt='Note image';im.referrerPolicy='no-referrer';insertAtCaret(im)});
  if(!saveNoteBox()){toast('Not enough space to save. Use a smaller image or GIF.');return false}
- toast(srcs.length>1?'Images added':'Image added');return true}
+ toast(srcs.length>1?'Images added':'Image added');offloadImages();return true}
 async function addUrl(raw){const u=cleanImgUrl(raw);if(!u)return false;
  toast('Checking image…');if(!(await checkImage(u))){toast('Could not load that image address');return false}
  return addImages([u])}
@@ -674,6 +699,7 @@ function render(dir){try{return render0(dir)}finally{markNext()}}
 function render0(dir){const y=cur.getFullYear();
  if(tok&&gRange&&(cur<addD(gRange.a,30)||cur>addD(gRange.b,-30)))gload();
  $('#back').style.display=(view=='day'||view=='workout'||view=='exercise')?'grid':'none';
+ {const inAct=(view=='workout'||view=='exercise');$('#prev').style.display=$('#next').style.display=inAct?'none':''}
  $('#title').innerHTML=view=='exercise'?'<b>Exercise</b>':view=='workout'?'<b>Workout</b>':view=='year'?`<b>${y}</b>`:`<b>${fd(cur,{month:'long'})}</b><span>${y}</span>`;
  $('#tn').textContent=new Date().getDate();
  main.innerHTML=({month:vMonth,week:()=>tg([...Array(7).keys()].map(i=>addD(wkStart(cur),i))),day:()=>tg([cur]),year:vYear,agenda:vAgenda,search:vSearch,workout:vWorkout,exercise:vExercise})[view]();
@@ -802,7 +828,7 @@ main.onclick=e=>{if(suppress)return;
  if(e.target.closest('#subcomplete')){if(activeSubExercise){const k='sc_subdone_'+activeWorkout.id+'_'+key(cur);let z={};try{z=JSON.parse(lg(k)||'{}')}catch(_){}z[activeSubExercise.name]=true;ls(k,JSON.stringify(z));toast('Exercise completed');}view='workout';activeSubExercise=null;render();return}
   const nimg=e.target.closest('#exnote img');if(nimg&&activeSubExercise){if(confirm('Remove this image from the note?')){nimg.nextSibling&&nimg.nextSibling.nodeName==='BR'&&nimg.nextSibling.remove();nimg.remove();saveNoteBox()}return}
  const sub=e.target.closest('[data-subex]');if(sub){activeSubExercise={name:decodeURIComponent(sub.dataset.subex),raw:decodeURIComponent(sub.dataset.subraw||''),section:sub.closest('.wsection')?.querySelector('h3')?.textContent?.replace('OPEN DETAILS ↗','').trim()||'SESSION'};view='exercise';render();pushPageState();return}
- const ex=e.target.closest('[data-ex]');if(ex){const doneKey='sc_done_'+activeWorkout.id+'_'+key(cur);let d={};try{d=JSON.parse(lg(doneKey)||'{}')}catch(x){}d[ex.dataset.ex]=ex.checked;ls(doneKey,JSON.stringify(d));{const nm=decodeURIComponent(ex.closest('.exercise').querySelector('[data-subex]').dataset.subex),sk='sc_subdone_'+activeWorkout.id+'_'+key(cur);let z={};try{z=JSON.parse(lg(sk)||'{}')}catch(_){}if(ex.checked)z[nm]=true;else delete z[nm];ls(sk,JSON.stringify(z));const dt=ex.closest('.exercise').querySelector('.exdetail');if(dt)dt.textContent=ex.checked?'COMPLETED · VIEW DETAILS':''}ex.closest('.exercise').classList.toggle('done',ex.checked);markNext();const total=main.querySelectorAll('.exercise').length,finished=main.querySelectorAll('.exercise input:checked').length;$('#wprogress').textContent=finished+' of '+total+' exercises completed';return}const x=e.target.closest('[data-e]');if(x){const item=ev.find(v=>v.id==x.dataset.e);if(item&&String(item.id).startsWith('plan_')&&(item.cal==='gym'||item.cal==='mob')){if(x.dataset.occ)cur=parse(x.dataset.occ);activeWorkout=item;activeSubExercise=null;view='workout';render();pushPageState();return}return openSheet(item)}
+ const ex=e.target.closest('[data-ex]');if(ex){const doneKey='sc_done_'+activeWorkout.id+'_'+key(cur);let d={};try{d=JSON.parse(lg(doneKey)||'{}')}catch(x){}d[ex.dataset.ex]=ex.checked;ls(doneKey,JSON.stringify(d));{const nm=decodeURIComponent(ex.closest('.exercise').querySelector('[data-subex]').dataset.subex),sk='sc_subdone_'+activeWorkout.id+'_'+key(cur);let z={};try{z=JSON.parse(lg(sk)||'{}')}catch(_){}if(ex.checked)z[nm]=true;else delete z[nm];ls(sk,JSON.stringify(z));const dt=ex.closest('.exercise').querySelector('.exdetail');if(dt)dt.textContent=ex.checked?'COMPLETED · VIEW DETAILS':''}ex.closest('.exercise').classList.toggle('done',ex.checked);markNext();const total=main.querySelectorAll('.exercise').length,finished=main.querySelectorAll('.exercise input:checked').length;$('#wprogress').textContent=finished+' of '+total+' exercises completed';return}const x=e.target.closest('[data-e]');if(x){const item=ev.find(v=>v.id==x.dataset.e);if(item&&String(item.id).startsWith('plan_')&&['gym','mob','run','fb'].includes(item.cal)){if(x.dataset.occ)cur=parse(x.dataset.occ);activeWorkout=item;activeSubExercise=null;view='workout';render();pushPageState();return}return openSheet(item)}
  const m=e.target.closest('[data-m]');if(m){cur=new Date(cur.getFullYear(),+m.dataset.m,1);return setView('month')}
  const c=e.target.closest('.col');if(c){const r=c.getBoundingClientRect();return newEv(parse(c.dataset.t),Math.min(23,Math.floor((e.clientY-r.top)/HH)))}
  const d=e.target.closest('[data-d]');if(d){const t=parse(d.dataset.d);
@@ -861,10 +887,30 @@ main.addEventListener('touchstart',e=>{tx=e.touches[0].clientX},{passive:true});
 main.addEventListener('touchend',e=>{if(tx==null||view=='search'||view=='exercise'||view=='workout')return;const dx=e.changedTouches[0].clientX-tx;tx=null;if(Math.abs(dx)>70)nav(dx<0?1:-1)},{passive:true});
 document.addEventListener('keydown',e=>{if(e.key=='Escape')return closeAll();
  if(/INPUT|SELECT|TEXTAREA/.test(e.target.tagName)||sheet.classList.contains('on'))return;
- if(e.key=='ArrowLeft')nav(-1);else if(e.key=='ArrowRight')nav(1);else if(e.key=='t')$('#today').click();else if(e.key=='n')newEv(cur)});
+ if(view=='workout'||view=='exercise')return;
+ if(e.key=='ArrowLeft')nav(-1);else if(e.key=='ArrowRight')nav(1)});
 addEventListener('resize',()=>render());
 addEventListener('beforeunload',stopTimer);
 render();
+
+/* ===== Account sync: notes, ticks and your own events are saved to your account so they survive closing the page ===== */
+const d2b=u=>{const m=/^data:([^;,]+)?(;base64)?,(.*)$/s.exec(u);const bin=atob(m[3]);const a=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)a[i]=bin.charCodeAt(i);return new Blob([a],{type:m[1]||'application/octet-stream'})};
+const upl=new WeakSet();
+async function offloadImages(){if(!ASSETS)return;const el=$('#exnote');if(!el)return;
+ for(const im of [...el.querySelectorAll('img')]){const src=im.getAttribute('src')||'';if(!src.startsWith('data:')||upl.has(im))continue;upl.add(im);
+  try{const r=await ASSETS.upload(d2b(src));if(r&&r.url&&im.isConnected){im.setAttribute('src',r.url);saveNoteBox()}}catch(e){upl.delete(im)}}}
+(async()=>{try{
+ if(!(window.claude&&claude.use))return;
+ const [db,user,assets]=await Promise.all([claude.use('db'),claude.use('user'),claude.use('assets')]);
+ ASSETS=assets||null;if(!db||!user)return;
+ const uid=await user.id();COL=db.collection('data/users/'+uid);
+ const snap=await COL.get(),have=new Set();
+ snap.docs.forEach(d=>{const o=d.data()||{},k=o.k;if(!k||typeof o.v!=='string'||NOSYNC.test(k))return;have.add(k);if(dirty.has(k))return;MEM[k]=o.v;try{localStorage.setItem(k,o.v)}catch(e){}});
+ try{for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(/^sc_(exnote|done|subdone|hide|ws|theme|userev)/.test(k)&&!have.has(k)){MEM[k]=localStorage.getItem(k);dirty.add(k)}}}catch(e){}
+ SYNCED=true;
+ try{const ue=JSON.parse(lg('sc_userev')||'[]'),ids=new Set(ev.map(e=>e.id));ue.forEach(e=>{if(e&&!ids.has(e.id))ev.push(e)})}catch(e){}
+ READY=true;save();dirty.forEach(k=>flush(k));render();
+}catch(e){}})();
 </script>
 <script>if('serviceWorker' in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}))}</script>
 </body>
